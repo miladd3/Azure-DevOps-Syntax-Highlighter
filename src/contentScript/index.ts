@@ -41,6 +41,54 @@ hljs.registerLanguage('scss', scss)
 let currentSettings: UserSettings = {
   enabled: true,
   theme: 'auto',
+  fontSize: 14,
+}
+
+// Style injection element
+let styleElement: HTMLStyleElement | null = null
+
+/**
+ * Create or update the injected stylesheet for dynamic settings
+ */
+function updateInjectedStyles(): void {
+  // Remove old style element if it exists
+  if (styleElement && styleElement.parentElement) {
+    styleElement.remove()
+    styleElement = null
+  }
+
+  // Create new style element
+  styleElement = document.createElement('style')
+  styleElement.id = 'azure-syntax-highlighter-styles'
+
+  // Calculate height: fontSize + 4px padding
+  const calculatedHeight = currentSettings.fontSize + 4
+
+  const css = `
+    .view-line {
+      height: ${calculatedHeight}px !important;
+      top: auto !important;
+    }
+    .azure-syntax-highlighted {
+      font-size: ${currentSettings.fontSize}px !important;
+    }
+  `
+
+  styleElement.textContent = css
+  document.head.appendChild(styleElement)
+
+  // Now recalculate top positions for each .view-line element
+  const viewLines = document.querySelectorAll('.view-line')
+  viewLines.forEach((line, index) => {
+    if (line instanceof HTMLElement) {
+      const topPosition = index * calculatedHeight
+      line.style.top = `${topPosition}px`
+    }
+  })
+
+  console.log(
+    `[Azure Syntax Highlighter] Injected styles: fontSize=${currentSettings.fontSize}px, height=${calculatedHeight}px, repositioned ${viewLines.length} lines`,
+  )
 }
 
 // Track highlighted elements to avoid re-processing
@@ -225,6 +273,14 @@ function applyMonacoBackground(
 }
 
 /**
+ * Update font size on all already-highlighted elements
+ */
+function updateHighlightedFontSize(fontSize: number): void {
+  console.log(`[Azure Syntax Highlighter] Font size changed to ${fontSize}px`)
+  updateInjectedStyles()
+}
+
+/**
  * Update theme classes on all already-highlighted elements and Monaco editors
  */
 function updateHighlightedThemes(): void {
@@ -323,11 +379,25 @@ function setHighlightingVisible(visible: boolean): void {
 }
 
 /**
+ * Check if we're currently on a pull request page
+ */
+function isPullRequestPage(): boolean {
+  return /\/pullrequest\/\d+/i.test(globalThis.location.href)
+}
+
+/**
  * Find the current file name from the Azure DevOps UI
  */
 function getCurrentFileName(): string | null {
   // Try different selectors for file name in Azure DevOps PR view
   const selectors = [
+    // PR-specific selectors
+    '.repos-file-header .bolt-header-title',
+    '.repos-file-header [class*="fileName"]',
+    // Files diff view in PR
+    '.repos-diff-viewer-header .file-path',
+    '.repos-diff-contents-header .file-name',
+    // General file viewing
     '.repos-summary-header .file-name',
     '.file-path',
     '.repos-changes-explorer-item.selected .file-name',
@@ -340,18 +410,40 @@ function getCurrentFileName(): string | null {
     '.bolt-header-title',
     '.repos-compare-toolbar .secondary-text',
     '[class*="fileName"]',
-    '[class*="file-name"]',
+    '[class*="file-path"]',
     '.diff-header-file-name',
+    // PR file item (when file list is visible)
+    '.file-explorer-item-name',
+    '[role="treeitem"] [class*="filename"]',
   ]
 
   for (const selector of selectors) {
     const el = document.querySelector(selector)
     if (el?.textContent) {
-      console.log(
-        `[Azure Syntax Highlighter] Found filename with selector "${selector}":`,
-        el.textContent.trim(),
-      )
-      return el.textContent.trim()
+      const filename = el.textContent.trim()
+      if (filename && !filename.includes('.azure.com')) {
+        console.log(
+          `[Azure Syntax Highlighter] Found filename with selector "${selector}":`,
+          filename,
+        )
+        return filename
+      }
+    }
+  }
+
+  // For PR views, try to get from breadcrumb navigation
+  if (isPullRequestPage()) {
+    const breadcrumbs = document.querySelectorAll('[class*="breadcrumb"]')
+    for (const breadcrumb of breadcrumbs) {
+      const text = breadcrumb.textContent?.trim()
+      if (text && text.includes('.')) {
+        // This looks like a filename
+        const matches = text.match(/[\w\-_.]+\.\w+/)
+        if (matches) {
+          console.log('[Azure Syntax Highlighter] Found filename from breadcrumb:', matches[0])
+          return matches[0]
+        }
+      }
     }
   }
 
@@ -371,7 +463,14 @@ function getCurrentFileName(): string | null {
     return path
   }
 
-  console.log('[Azure Syntax Highlighter] Could not find filename. URL:', globalThis.location.href)
+  // Debug log (not an error) - this is normal when on PR overview or non-file pages
+  if (isPullRequestPage()) {
+    console.debug(
+      '[Azure Syntax Highlighter] No specific file detected in PR view. Select a file to view syntax highlighting.',
+    )
+  } else {
+    console.debug('[Azure Syntax Highlighter] No filename found. URL:', globalThis.location.href)
+  }
   return null
 }
 
@@ -381,7 +480,7 @@ function getCurrentFileName(): string | null {
 function isInSidebar(element: Element): boolean {
   return (
     element.closest(
-      '.repos-changes-explorer-tree, .repos-file-explorer-tree, .vss-Splitter--pane-fixed, .bolt-table-container',
+      '.repos-changes-explorer-tree, .repos-file-explorer-tree, .vss-Splitter--pane-fixed, .bolt-table-container, .pr-files-list, .repos-files-changed-navigator',
     ) !== null
   )
 }
@@ -421,6 +520,8 @@ function highlightCodeLine(lineElement: Element, language: string): void {
     const highlightedSpan = document.createElement('span')
     highlightedSpan.innerHTML = result.value
     highlightedSpan.className = `azure-syntax-highlighted ${themeClass}`
+    // Apply font size immediately
+    highlightedSpan.style.fontSize = `${currentSettings.fontSize}px`
 
     // Replace content while preserving structure
     target.innerHTML = ''
@@ -471,6 +572,9 @@ function processCodeLines(): void {
     // Specific diff content areas
     '.repos-diff-contents .view-line',
     '.repos-summary-diff .view-line',
+    // PR-specific diff viewers
+    '.repos-file-content .view-line',
+    '.repos-code-viewer .view-line',
     // Legacy selectors
     '.repos-line-content',
     '.code-line-content',
@@ -496,7 +600,9 @@ function processCodeLines(): void {
   if (totalFound === 0) {
     console.log('[Azure Syntax Highlighter] No code lines found. Looking for Monaco editors...')
     const monacoEditors = document.querySelectorAll('.monaco-editor')
-    console.log(`[Azure Syntax Highlighter] Found ${monacoEditors.length} Monaco editors`)
+    console.log(
+      `[Azure Syntax Highlighter] Found ${monacoEditors.length} Monaco editors`,
+    )
     monacoEditors.forEach((editor, i) => {
       const inSidebar = isInSidebar(editor)
       console.log(
@@ -504,6 +610,9 @@ function processCodeLines(): void {
       )
     })
   }
+
+  // Update injected styles to apply current font size and line height
+  updateInjectedStyles()
 }
 
 /**
@@ -518,7 +627,9 @@ function isCodeRelatedElement(element: Element): boolean {
     element.classList?.contains('code-line') ||
     element.classList?.contains('view-line') ||
     element.classList?.contains('monaco-editor') ||
-    element.querySelector?.('.repos-line, .code-line, .diff-line, .view-line') !== null
+    element.classList?.contains('repos-diff-content') ||
+    element.classList?.contains('pr-diff-viewer') ||
+    element.querySelector?.('.repos-line, .code-line, .diff-line, .view-line, .monaco-editor') !== null
   )
 }
 
@@ -591,24 +702,36 @@ function setupMonacoStyleObserver(): void {
 }
 
 /**
- * Handle URL changes (SPA navigation)
+ * Handle URL changes (SPA navigation) and handle PR file switching
  */
 function setupUrlChangeListener(): void {
   let lastUrl = globalThis.location.href
+  let lastFileName: string | null = getCurrentFileName()
 
   const checkUrlChange = (): void => {
-    if (globalThis.location.href !== lastUrl) {
-      lastUrl = globalThis.location.href
+    const currentUrl = globalThis.location.href
+    const currentFileName = getCurrentFileName()
+
+    // Check if URL changed (back/forward navigation)
+    if (currentUrl !== lastUrl) {
+      lastUrl = currentUrl
       console.log('[Azure Syntax Highlighter] URL changed, reprocessing...')
       // Reset highlighted elements for new page
       setTimeout(() => processCodeLines(), 500)
+    } else if (currentFileName !== lastFileName) {
+      // File changed within PR view (user selected different file)
+      lastFileName = currentFileName
+      if (currentFileName) {
+        console.log('[Azure Syntax Highlighter] File changed in PR view, reprocessing...')
+        setTimeout(() => processCodeLines(), 300)
+      }
     }
   }
 
   // Listen for popstate (back/forward navigation)
   globalThis.addEventListener('popstate', checkUrlChange)
 
-  // Poll for URL changes (for SPA navigation)
+  // Poll for URL and file changes (for SPA navigation)
   setInterval(checkUrlChange, 1000)
 }
 
@@ -623,11 +746,15 @@ async function init(): Promise<void> {
   currentSettings = await getSettings()
   console.log('[Azure Syntax Highlighter] Settings loaded:', currentSettings)
 
+  // Apply initial styles
+  updateInjectedStyles()
+
   // Listen for settings changes
   onSettingsChange((settings) => {
     console.log('[Azure Syntax Highlighter] Settings changed:', settings)
     const themeChanged = currentSettings.theme !== settings.theme
     const enabledChanged = currentSettings.enabled !== settings.enabled
+    const fontSizeChanged = currentSettings.fontSize !== settings.fontSize
     currentSettings = settings
 
     if (enabledChanged) {
@@ -638,6 +765,11 @@ async function init(): Promise<void> {
     if (themeChanged && settings.enabled) {
       // Update theme on all already-highlighted elements
       updateHighlightedThemes()
+    }
+
+    if (fontSizeChanged && settings.enabled) {
+      // Update font size on all already-highlighted elements
+      updateHighlightedFontSize(settings.fontSize)
     }
 
     // Process new lines if enabled

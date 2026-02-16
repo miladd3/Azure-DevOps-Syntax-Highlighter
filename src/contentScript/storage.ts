@@ -21,11 +21,13 @@ export interface UserSettings {
     | 'quiet-light'
     | 'light-plus'
     | 'auto'
+  fontSize: number
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
   enabled: true,
   theme: 'auto',
+  fontSize: 14,
 }
 
 /**
