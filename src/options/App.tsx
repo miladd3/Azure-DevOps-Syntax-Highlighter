@@ -8,14 +8,12 @@ interface Settings {
   enabled: boolean
   theme: Theme
   fontSize: number
-  lineHeight: number
 }
 
 const DEFAULT_SETTINGS: Settings = {
   enabled: true,
   theme: 'auto',
   fontSize: 14,
-  lineHeight: 1.5,
 }
 
 function App() {
@@ -127,26 +125,6 @@ function App() {
           <div className="flex justify-between text-xs text-gray-500 mt-1">
             <span>10px</span>
             <span>24px</span>
-          </div>
-        </div>
-
-        <div className="mb-4">
-          <label className="font-medium text-gray-700">Line Height</label>
-          <p className="text-sm text-gray-500 mb-2">Adjust line spacing: {settings.lineHeight}</p>
-          <input
-            type="range"
-            min="1"
-            max="2.5"
-            step="0.1"
-            value={settings.lineHeight}
-            onchange={(e: Event) =>
-              updateSettings({ lineHeight: parseFloat((e.target as HTMLInputElement).value) })
-            }
-            className="w-full"
-          />
-          <div className="flex justify-between text-xs text-gray-500 mt-1">
-            <span>1.0</span>
-            <span>2.5</span>
           </div>
         </div>
       </div>

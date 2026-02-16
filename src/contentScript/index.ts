@@ -42,7 +42,53 @@ let currentSettings: UserSettings = {
   enabled: true,
   theme: 'auto',
   fontSize: 14,
-  lineHeight: 1.5,
+}
+
+// Style injection element
+let styleElement: HTMLStyleElement | null = null
+
+/**
+ * Create or update the injected stylesheet for dynamic settings
+ */
+function updateInjectedStyles(): void {
+  // Remove old style element if it exists
+  if (styleElement && styleElement.parentElement) {
+    styleElement.remove()
+    styleElement = null
+  }
+
+  // Create new style element
+  styleElement = document.createElement('style')
+  styleElement.id = 'azure-syntax-highlighter-styles'
+
+  // Calculate height: fontSize + 4px padding
+  const calculatedHeight = currentSettings.fontSize + 4
+
+  const css = `
+    .view-line {
+      height: ${calculatedHeight}px !important;
+      top: auto !important;
+    }
+    .azure-syntax-highlighted {
+      font-size: ${currentSettings.fontSize}px !important;
+    }
+  `
+
+  styleElement.textContent = css
+  document.head.appendChild(styleElement)
+
+  // Now recalculate top positions for each .view-line element
+  const viewLines = document.querySelectorAll('.view-line')
+  viewLines.forEach((line, index) => {
+    if (line instanceof HTMLElement) {
+      const topPosition = index * calculatedHeight
+      line.style.top = `${topPosition}px`
+    }
+  })
+
+  console.log(
+    `[Azure Syntax Highlighter] Injected styles: fontSize=${currentSettings.fontSize}px, height=${calculatedHeight}px, repositioned ${viewLines.length} lines`,
+  )
 }
 
 // Track highlighted elements to avoid re-processing
@@ -230,56 +276,8 @@ function applyMonacoBackground(
  * Update font size on all already-highlighted elements
  */
 function updateHighlightedFontSize(fontSize: number): void {
-  const highlightedSpans = document.querySelectorAll('.azure-syntax-highlighted')
-  const monacoEditors = document.querySelectorAll('.monaco-editor.azure-syntax-editor')
-
-  console.log(
-    `[Azure Syntax Highlighter] Updating font size to ${fontSize}px for ${highlightedSpans.length} elements`,
-  )
-
-  highlightedSpans.forEach((span) => {
-    if (span instanceof HTMLElement) {
-      span.style.fontSize = `${fontSize}px`
-    }
-  })
-
-  // Also apply to Monaco editor line content - use a more direct approach
-  monacoEditors.forEach((editor) => {
-    const lineContent = editor.querySelectorAll('.view-line')
-    lineContent.forEach((line) => {
-      if (line instanceof HTMLElement) {
-        line.style.fontSize = `${fontSize}px`
-      }
-    })
-  })
-}
-
-/**
- * Update line height on all already-highlighted elements
- */
-function updateHighlightedLineHeight(lineHeight: number): void {
-  const highlightedSpans = document.querySelectorAll('.azure-syntax-highlighted')
-  const monacoEditors = document.querySelectorAll('.monaco-editor.azure-syntax-editor')
-
-  console.log(
-    `[Azure Syntax Highlighter] Updating line height to ${lineHeight} for ${highlightedSpans.length} elements`,
-  )
-
-  highlightedSpans.forEach((span) => {
-    if (span instanceof HTMLElement) {
-      span.style.lineHeight = `${lineHeight}`
-    }
-  })
-
-  // Also apply to Monaco editor line content
-  monacoEditors.forEach((editor) => {
-    const lineContent = editor.querySelectorAll('.view-line')
-    lineContent.forEach((line) => {
-      if (line instanceof HTMLElement) {
-        line.style.lineHeight = `${lineHeight}`
-      }
-    })
-  })
+  console.log(`[Azure Syntax Highlighter] Font size changed to ${fontSize}px`)
+  updateInjectedStyles()
 }
 
 /**
@@ -522,9 +520,8 @@ function highlightCodeLine(lineElement: Element, language: string): void {
     const highlightedSpan = document.createElement('span')
     highlightedSpan.innerHTML = result.value
     highlightedSpan.className = `azure-syntax-highlighted ${themeClass}`
-    // Apply font size and line height immediately
+    // Apply font size immediately
     highlightedSpan.style.fontSize = `${currentSettings.fontSize}px`
-    highlightedSpan.style.lineHeight = `${currentSettings.lineHeight}`
 
     // Replace content while preserving structure
     target.innerHTML = ''
@@ -613,6 +610,9 @@ function processCodeLines(): void {
       )
     })
   }
+
+  // Update injected styles to apply current font size and line height
+  updateInjectedStyles()
 }
 
 /**
@@ -746,6 +746,9 @@ async function init(): Promise<void> {
   currentSettings = await getSettings()
   console.log('[Azure Syntax Highlighter] Settings loaded:', currentSettings)
 
+  // Apply initial styles
+  updateInjectedStyles()
+
   // Listen for settings changes
   onSettingsChange((settings) => {
     console.log('[Azure Syntax Highlighter] Settings changed:', settings)
@@ -767,12 +770,6 @@ async function init(): Promise<void> {
     if (fontSizeChanged && settings.enabled) {
       // Update font size on all already-highlighted elements
       updateHighlightedFontSize(settings.fontSize)
-    }
-
-    const lineHeightChanged = currentSettings.lineHeight !== settings.lineHeight
-    if (lineHeightChanged && settings.enabled) {
-      // Update line height on all already-highlighted elements
-      updateHighlightedLineHeight(settings.lineHeight)
     }
 
     // Process new lines if enabled
